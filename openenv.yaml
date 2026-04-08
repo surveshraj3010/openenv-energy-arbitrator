@@ -1,0 +1,173 @@
+name: microgrid-energy-arbitrator-v1
+version: "1.0.0"
+description: >
+  A physics-grounded micro-grid energy management environment where an AI agent
+  controls energy flows between a rooftop solar PV array, a lithium battery bank,
+  and the main electricity grid over a 24-hour horizon. The agent must balance
+  cost minimisation, battery reserve management, and blackout prevention — mirroring
+  real Energy Management System (EMS) decision-making. Grounded in IIT Mandi's
+  campus solar installation context and Indian C&I electricity tariff structures.
+
+author: RauResh — IIT Mandi
+license: Apache-2.0
+tags:
+  - energy
+  - micro-grid
+  - solar
+  - battery
+  - real-world
+  - sustainability
+  - rl-benchmark
+  - openenv
+
+observation_space:
+  type: dict
+  description: "Full observable state of the micro-grid at one hourly timestep"
+  fields:
+    episode_id:   {type: string}
+    task_id:      {type: string}
+    hour:         {type: int, range: [0, 23]}
+    step_number:  {type: int}
+    max_steps:    {type: int, default: 24}
+    battery:
+      type: dict
+      fields:
+        state_of_charge_pct:    {type: float, range: [0.0, 100.0], unit: percent}
+        capacity_kwh:           {type: float, unit: kWh}
+        max_charge_rate_kw:     {type: float, unit: kW}
+        max_discharge_rate_kw:  {type: float, unit: kW}
+        cycle_count:            {type: float}
+        temperature_c:          {type: float, unit: celsius}
+    solar:
+      type: dict
+      fields:
+        rated_kw:         {type: float, unit: kW}
+        panel_efficiency: {type: float, range: [0.05, 0.30]}
+    current_solar_output_kw: {type: float, unit: kW}
+    irradiance_wm2:          {type: float, unit: "W/m²"}
+    ambient_temp_c:          {type: float, unit: celsius}
+    weather:                 {type: string, values: [clear, partial_cloud, overcast, storm]}
+    pricing:
+      type: dict
+      fields:
+        buy_price_per_kwh:  {type: float, unit: "USD/kWh"}
+        sell_price_per_kwh: {type: float, unit: "USD/kWh"}
+        is_peak_hour:       {type: bool}
+    load:
+      type: dict
+      fields:
+        total_demand_kw: {type: float, unit: kW}
+        critical_kw:     {type: float, unit: kW}
+        essential_kw:    {type: float, unit: kW}
+        deferrable_kw:   {type: float, unit: kW}
+    forecast:
+      type: dict
+      fields:
+        irradiance_forecast_wm2: {type: list, items: float, length: 6}
+        price_forecast:          {type: list, items: float, length: 6}
+        load_forecast_kw:        {type: list, items: float, length: 6}
+        weather_sequence:        {type: list, items: string, length: 6}
+    total_cost_usd:       {type: float}
+    total_revenue_usd:    {type: float}
+    blackout_count:       {type: int}
+    hours_above_reserve:  {type: int}
+    cumulative_reward:    {type: float}
+
+action_space:
+  type: dict
+  description: "One energy management decision per hourly timestep"
+  actions:
+    buy_energy:
+      format: "buy_energy:<kw>"
+      description: "Purchase kW from main grid to charge battery"
+      range: [0.0, 20.0]
+    sell_energy:
+      format: "sell_energy:<kw>"
+      description: "Export kW from battery to main grid"
+      range: [0.0, 20.0]
+    store_energy:
+      format: "store_energy:0"
+      description: "Route solar generation to battery, no grid trade"
+    idle:
+      format: "idle:0"
+      description: "No grid transaction this hour"
+    load_shed_modifier:
+      format: "buy_energy:<kw>:shed_<tier>"
+      description: "Combine any action with optional load-shedding"
+      tiers: [deferrable, essential, critical]
+
+reward:
+  type: float
+  range: [-55.0, 5.0]
+  description: "Shaped per-step reward — dense signal every hour"
+  components:
+    economic_gain:
+      range: [-5.0, 3.0]
+      description: "Revenue from selling minus cost of buying"
+    blackout_penalty:
+      value: -50.0
+      description: "Applied immediately on grid failure (SoC → 0%)"
+    reserve_bonus:
+      value: +0.15
+      description: "Per step with battery SoC above 20% reserve floor"
+    shed_penalty:
+      range: [-20.0, -1.0]
+      description: "Tiered load-shedding penalty (deferrable < essential < critical)"
+    efficiency_bonus:
+      range: [0.0, 0.30]
+      description: "Bonus for smart arbitrage (buy off-peak, sell peak)"
+    step_cost:
+      value: -0.01
+      description: "Fixed per-step operational overhead"
+
+tasks:
+  - id: task_easy
+    description: >
+      24-hour operation with 80% initial SoC, mostly clear weather, moderate load.
+      Agent must avoid blackouts and stay within $8 budget.
+    difficulty: easy
+    pass_threshold: 0.70
+    initial_soc_pct: 80.0
+    weather_profile: mostly_clear
+    budget_usd: 8.00
+
+  - id: task_medium
+    description: >
+      Cloudy day, 50% initial SoC, intermittent solar. Agent must time purchases
+      to off-peak hours and manage battery across unpredictable generation.
+    difficulty: medium
+    pass_threshold: 0.60
+    initial_soc_pct: 50.0
+    weather_profile: mixed_cloud
+    budget_usd: 5.00
+
+  - id: task_hard
+    description: >
+      Storm scenario, critically low 25% initial SoC, near-zero solar, price spikes.
+      Agent must use load-shedding strategically to survive 24 hours within $3 budget.
+    difficulty: hard
+    pass_threshold: 0.50
+    initial_soc_pct: 25.0
+    weather_profile: storm_dominant
+    budget_usd: 3.00
+
+episodes:
+  timestep: 1 hour
+  length: 24 steps
+  termination: "24 hours elapsed OR blackout event (SoC = 0%)"
+
+hardware_reference:
+  solar_array: "20 kW rooftop mono-Si PV"
+  battery_bank: "50 kWh LFP lithium iron phosphate"
+  inverter: "15 kW bidirectional grid-tied"
+  sensor_noise: "Gaussian ±3% RMSE (ESP32 + ADS1115 ADC)"
+  location: "IIT Mandi, Himachal Pradesh, India (31.7°N, 76.9°E)"
+
+baseline:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  seed: 42
+  script: inference.py
+  expected_scores:
+    task_easy:   "~0.60"
+    task_medium: "~0.45"
+    task_hard:   "~0.30"
