@@ -79,8 +79,8 @@ def reset(req: ResetRequest) -> Dict[str, Any]:
     return {"session_id": session_id, "observation": obs.model_dump()}
 
 
-@app.post("/step")
-def step(req: StepRequest) -> Dict[str, Any]:
+@app.post("/reset")
+def reset(req: ResetRequest = ResetRequest()) -> Dict[str, Any]:
     env = _sessions.get(req.session_id)
     if env is None:
         raise HTTPException(404, f"Session {req.session_id!r} not found. Call /reset first.")
